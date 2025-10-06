@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools >= 61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "echosv"
+authors = [
+    {name = "Yuwei Zhang", email="yuwei_zhang@hms.harvard.edu"}
+]
+description = "A novel tool for accurately merging haplotype-based SV calls and comparing SVs across reference genomes"
+readme = "README.md"
+license = { text = "MIT" }
+dynamic = ["version"]
+requires-python = ">=3.8"
+
+[project.scripts]
+echosv = "echosv.main:main"
+
