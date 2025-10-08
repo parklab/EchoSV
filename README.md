@@ -1,7 +1,7 @@
 # EchoSV
 ## Overview
 EchoSV is a versatile tool for comparing and merging structural variant (SV) call sets that were generated using different reference genomes. It studies how SVs "echo" across these references through a hybrid workflow that combines lift-over and graph-based matching.
-![EchoSV Workflow](echosv_workflow.pdf)
+![EchoSV Workflow](./echosv_workflow.pdf)
 Given two or more SV call sets from the same sample—each aligned to a different reference—EchoSV can perform two primary operations:
 - **Merge**: Consolidates multiple SV call sets into a single, unified output. For example, it can merge two DSA haplotype–based call sets into one consolidated file.
 - **Compare**: Generates a detailed comparison identifying overlapping variants and those exclusive to a specific reference, such as when analyzing calls across GRCh38, CHM13, and DSA.
@@ -17,11 +17,11 @@ Given two or more SV call sets from the same sample—each aligned to a differen
 ## Requirements
 
 EchoSV depends on the following Python packages:
-- **pysam**: Read and write BAM/CRAM files and VCF records for variant processing.  
-- **intervaltree**: Efficiently store and query genomic intervals to detect overlapping SVs.  
-- **Biopython (Bio)**: Parse and manipulate sequence data during liftover steps.  
-- **scipy**: Perform statistical analysis and numerical computations on variant metrics.  
-- **networkx**: Construct and traverse graphs that model structural variant matches.  
+- [**pysam**](https://github.com/pysam-developers/pysam): Read and write BAM/CRAM files and VCF records for variant processing.  
+- [**intervaltree**](https://github.com/ekg/intervaltree): Efficiently store and query genomic intervals to detect overlapping SVs.  
+- [**Biopython (Bio)**](https://github.com/biopython/biopython): Parse and manipulate sequence data during liftover steps.  
+- [**scipy**](https://github.com/scipy/scipy): Perform statistical analysis and numerical computations on variant metrics.  
+- [**networkx**](https://github.com/networkx/networkx): Construct and traverse graphs that model structural variant matches.  
 
 ## Installation
 
