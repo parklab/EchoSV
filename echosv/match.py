@@ -6,29 +6,33 @@
 @Contact: yuwei_zhang@hms.harvard.edu
 '''
 
-import gzip, timeit, argparse, os
+import gzip, timeit, argparse, os, json
 from pysam import AlignmentFile
-from echosv.collect_suppread_lrs import AnnSV as AnnSV_lrs
-from echosv.collect_suppread_srs import AnnSV as AnnSV_srs
+from echosv.sv_cmp_liftover import sv_cmp_liftover
+from echosv.sv_cmp_mbm import SVCombine
 
-def match_main(args=None):
+def match_main(params=None):
     import argparse
-    parser = argparse.ArgumentParser(description="Annotate SVs from given dataset.")
-    parser.add_argument("--longread", action="store_true", help="Use genotyping for long read data.")
-    parser.add_argument("--shortread", action="store_true", help="Use genotyping for short read data.")
-    parser.add_argument("-i", "--input", help="Input SV vcf file.", default=None, required=True)
-    parser.add_argument("-b", "--bam", nargs="+", help="Bam file.", default=None, required=True)
-    parser.add_argument("-o", "--output", help="Output vcf file.")
-    parser.add_argument("-q", "--min_mapq", help="Minimum mapping quality, default 1", default=1, type=int)
-    parser.add_argument("-d", "--dist_threshold", help="Distance threshold for read alignment, default 500bp", default=500, type=int)
-    parser.add_argument("-s", "--ratio_of_seqsize", help="Ratio of sequence size for SVs, default 0.5", default=0.5, type=float)
-    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose mode.")
-    args = parser.parse_args()
-    
-    if args.longread:
-        anno = AnnSV_lrs(sv_vcf=args.input, bam_list=args.bam, out_file=args.output, min_mapq=args.min_map, dist_threshold=args.dist_threshold, ratio_of_seqsize=args.ratio_of_seqsize, verbose=args.verbose)
-    elif args.shortread:
-        anno = AnnSV_srs(sv_vcf=args.input, bam_list=args.bam, out_file=args.output, min_mapq=args.min_map, dist_threshold=args.dist_threshold, ratio_of_seqsize=args.ratio_of_seqsize, verbose=args.verbose)
+    parser = argparse.ArgumentParser(prog="match", description="Identify concordant and reference-exclusive SVs.")
+    parser.add_argument("-i", "--input", help="Input config file, see example as ./test_data/test_colo829_config.json", default="./test_data/test_colo829_config.json")
+    parser.add_argument("--multiplat", action="store_true", help="Use multi-platform comparison.")
+    parser.add_argument("--merge", action="store_true", help="Merge concordant SVs across references and derive a single VCF.")
+    parser.add_argument("--filter", action="store_true", help="Use genotyping-based filter for merging SVs.")
+    parser.add_argument("-m", "--min_echo_score", type=float, help="Minimum echo score to consider an SV for matching (default: 0.5).", default=0.5)
+    if params is not None:
+        if isinstance(params, str):
+            params = params.split()
+        args = parser.parse_args(params)
     else:
-        raise ValueError("Please specify either --longread or --shortread option.")
-    anno.run()
+        args = parser.parse_args()
+    
+    # load config.json file
+    with open(args.input, 'r') as f:
+        config = json.load(f)
+    start_time = timeit.default_timer()
+    df = sv_cmp_liftover(config=config)
+    print(f"Match SVs through liftover: {timeit.default_timer() - start_time:.2f} seconds")
+
+    start_time = timeit.default_timer()
+    SVCombine(config=config, iffilter=args.filter, ifmerge=args.merge, ifmultiplat=args.multiplat, threshold=args.min_echo_score).run()
+    print(f"Match SVs through graph-based matching: {timeit.default_timer() - start_time:.2f} seconds")

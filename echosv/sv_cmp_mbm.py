@@ -8,7 +8,9 @@
 
 from pysam import VariantFile, VariantHeader, tabix_index
 import argparse, os, timeit
+from scipy.optimize import linear_sum_assignment
 from scipy.sparse import lil_matrix, csr_matrix
+import networkx as nx
 import pandas as pd
 import numpy as np
 from echosv.vcf_utils import get_sv_len, get_sv_end
@@ -55,27 +57,50 @@ def get_max_match_dense(match_matrix):  # ndarray input
     matching = [(row, col) for row, col in matching if match_matrix[row, col] > 0]
     return matching, total_cost
 
+def get_max_match_sparse(match_matrix): # csr_matrix input
+    rows, cols = match_matrix.nonzero()
+    weights = match_matrix.data
+    n_x_nodes, n_y_nodes = match_matrix.shape
+    G = nx.Graph()
+    # add nodes
+    G.add_nodes_from(range(n_x_nodes), bipartite=0)
+    G.add_nodes_from(range(n_x_nodes, n_x_nodes+n_y_nodes), bipartite=1)
+    # add edges
+    edge_list = [(row, n_x_nodes + col, {'weight': weight}) for row, col, weight in zip(rows, cols, weights)]
+    G.add_edges_from(edge_list)
+    matching = nx.algorithms.matching.max_weight_matching(G, maxcardinality=True, weight='weight')
+    total_cost = sum([G[u][v]['weight'] for u, v in matching])
+    # only keep the valid matches
+    valid_matching = []
+    for u, v in matching:
+        if G[u][v]['weight'] > 0:
+            if u < n_x_nodes:
+                valid_matching.append((u, v - n_x_nodes))
+            else:
+                valid_matching.append((v, u - n_x_nodes))
+    return valid_matching, total_cost
+
 class SVCombine:
     '''
     create the sv match table for the input vcf files, and output the table to a csv file.
     rows: SVs from the base vcf file
     columns: SVs from the comparison vcf files
     '''
-    def __init__(self, corr_txt, 
-                 fileformat, 
-                 refs, 
-                 output,
+    def __init__(self, config=None,
                  verbose=False, 
-                 threshold=0.3, 
-                 ifhighconfi=True):
-        self.corr_txt = corr_txt
-        self.fileformat=fileformat
-        self.reflist = refs
+                 threshold=0.5, 
+                 ifmultiplat=False,
+                 ifmerge=False,
+                 iffilter=False,):
+        self.config = config
+        self.corr_txt = self.config["output"].replace(".txt", "_liftover.txt")
+        self.reflist = list(self.config["refs"].values())
         self.fileList = []
-        self.out_file = output
         self.verbose = verbose
         self.threshold = threshold
-        self.ifhighconfi = ifhighconfi
+        self.ifmultiplat = ifmultiplat
+        self.ifmerge = ifmerge
+        self.iffilter = iffilter
         self.svs_items = {ref: set() for ref in self.reflist}
 
     def _loadMatches(self):
@@ -100,24 +125,13 @@ class SVCombine:
 
     def run(self):
         # collect all the svs
-        if len(self.fileformat) == 1:
-            self.fileformat = self.fileformat[0]
-            refo, sample = os.path.basename(self.fileformat).split("_")[:2]
-            for ref in self.reflist:
-                self.fileList.append(self.fileformat.replace(refo, ref))
-                vcf = VariantFile(self.fileformat.replace(refo, ref))
-                for record in vcf:
-                    _, pos2 = get_sv_end(record)
-                    self.svs_items[ref].add(str(record.pos) + "%" + str(pos2) + "%" + str(get_sv_len(record)) + "%" + record.id)
-                vcf.close()
-        else:
-            for file_i in range(len(self.fileformat)):
-                self.fileList.append(self.fileformat[file_i])
-                vcf = VariantFile(self.fileformat[file_i])
-                for record in vcf:
-                    _, pos2 = get_sv_end(record)
-                    self.svs_items[self.reflist[file_i]].add(str(record.pos) + "%" + str(pos2) + "%" + str(get_sv_len(record)) + "%" + record.id)
-                vcf.close()
+        for ref_index, file in self.config["vcfs"].items():
+            self.fileList.append(file)
+            vcf = VariantFile(file)
+            for record in vcf:
+                _, pos2 = get_sv_end(record)
+                self.svs_items[self.config["refs"][ref_index]].add(str(record.pos) + "%" + str(pos2) + "%" + str(get_sv_len(record)) + "%" + record.id)
+            vcf.close()
         if not self.corr_txt is None:
             pre_matches, pre_svs = self._loadMatches()
         # create a table with 12 columns 
@@ -127,27 +141,28 @@ class SVCombine:
         n_novel_match_difficult = 0
         # base is the first vcf file
         for base_index in range(0, len(self.reflist)):
-            base_ref = self.reflist[base_index]
+            base_ref = self.config["refs"][str(base_index+1)]
             base_sv_dict, base_suppRead_dict = get_suppRead(self.fileList[base_index])
             base_svs = list(base_sv_dict.keys())
             base_table = []
             for i, sv in enumerate(base_sv_dict):
                 base_table.append([sv] + [0]*(len(self.reflist)-base_index-1))
             for cmp_index in range(base_index+1, len(self.reflist)):
-                cmp_ref = self.reflist[cmp_index]
+                cmp_ref = self.config["refs"][str(cmp_index+1)]
                 cmp_sv_dict, cmp_suppRead_dict = get_suppRead(self.fileList[cmp_index])
                 cmp_svs = list(cmp_sv_dict.keys())
                 match_matrix = self.get_matrix(base_sv_dict, cmp_sv_dict, base_suppRead_dict, cmp_suppRead_dict)
-                if self.ifhighconfi:
+                if self.ifmultiplat:   # add multi-platform support
                     # ont similarity matrix
                     sv_dict1, sv_suppRead_dict1 = get_suppRead(self.fileList[base_index], sampleidx=1)
                     sv_dict2, sv_suppRead_dict2 = get_suppRead(self.fileList[cmp_index], sampleidx=1)
                     match_matrix = self.get_matrix(sv_dict1, sv_dict2, sv_suppRead_dict1, sv_suppRead_dict2, match_matrix)
                     # ill similarity matrix
-                    # if os.path.getsize(self.fileList[base_index].replace("lr", "sr")) and os.path.getsize(self.fileList[cmp_index].replace("lr", "sr")):
-                    sv_dict1, sv_suppRead_dict1 = get_suppRead(self.fileList[base_index].replace("lr", "sr"), sampleidx=0)
-                    sv_dict2, sv_suppRead_dict2 = get_suppRead(self.fileList[cmp_index].replace("lr", "sr"), sampleidx=0)
-                    match_matrix = self.get_matrix(sv_dict1, sv_dict2, sv_suppRead_dict1, sv_suppRead_dict2, match_matrix)
+
+                    if os.path.getsize(self.fileList[base_index].replace("lr", "sr")) and os.path.getsize(self.fileList[cmp_index].replace("lr", "sr")):
+                        sv_dict1, sv_suppRead_dict1 = get_suppRead(self.fileList[base_index].replace("lr", "sr"), sampleidx=0)
+                        sv_dict2, sv_suppRead_dict2 = get_suppRead(self.fileList[cmp_index].replace("lr", "sr"), sampleidx=0)
+                        match_matrix = self.get_matrix(sv_dict1, sv_dict2, sv_suppRead_dict1, sv_suppRead_dict2, match_matrix)
                 if self.corr_txt is not None:   # add pre_matches info
                     # remove the previous matches from the lil matrix
                     base_to_del = set()    # index: count
@@ -159,7 +174,8 @@ class SVCombine:
                                 n_matches += 1
                                 base_to_del.add(i)
                                 cmp_to_del.add(j)
-                    print("Remove previous matches from the match matrix", base_ref, cmp_ref, len(base_to_del), len(cmp_to_del))
+
+                    # print("Remove previous matches from the match matrix", base_ref, cmp_ref, len(base_to_del), len(cmp_to_del))
                     # print([base_svs[i] for i in base_to_del], [cmp_svs[i] for i in cmp_to_del])
                     rows_to_keep = np.delete(np.arange(len(base_svs)), list(base_to_del))
                     cols_to_keep = np.delete(np.arange(len(cmp_svs)), list(cmp_to_del))
@@ -197,15 +213,11 @@ class SVCombine:
             result_df = pd.concat([result_df, new_df], axis=0, ignore_index=True)
         if self.verbose:
             print(f"Find {n_matches} matches, {n_novel_match_easy} novel matches in easy region and {n_novel_match_difficult} novel matches in difficult region.")
-        result_df.to_csv(self.out_file, sep=",", index=False)
-        if self.reflist == ["hap1", "hap2"]:    # dsa merging
+        result_df.to_csv(self.config["output"], sep=",", index=False)
+        if self.ifmerge:    # merge the svs and output a new vcf file
             # write into a new file
-            if self.ifhighconfi:
-                self.output_sv(result_df)
-            else:
-                self.output_sv_quick(result_df)
-        
-    
+            self.output_sv_quick(result_df)
+
     def get_matrix(self, svDict1, svDict2, supp_read_dict1, supp_read_dict2, match_matrix=None):
         len1 = len(svDict1)
         len2 = len(svDict2)
@@ -284,7 +296,10 @@ class SVCombine:
                     outVCF.write(svItem)
                     chosen_svs.add(sv_id)
                     n_out += 1
-                elif mode == "lr" and self.check_normal_supp(svItem):
+
+                elif mode == "lr":
+                    if self.iffilter and not self.check_normal_supp(svItem):
+                        continue
                     outVCF.write(svItem)
                     chosen_svs.add(sv_id)
                     n_out += 1
@@ -301,8 +316,9 @@ class SVCombine:
                 sv_id = str(svItem.pos) + "%" + str(pos2) + "%" + str(get_sv_len(svItem)) + "%" + svItem.id
                 match_sv = result_df[result_df["hap2"] == sv_id]["hap1"].values[0]
                 if match_sv == 0:
-                    if mode == "lr" and not self.check_normal_supp(svItem):
-                        continue
+                    if mode == "lr":
+                        if self.iffilter and not self.check_normal_supp(svItem):
+                            continue
                     if mode == "sr" and sv_id not in chosen_svs:
                         continue
                     new_record = header.new_record(contig=svItem.contig, start=svItem.pos, stop=svItem.stop, id=svItem.id, alleles=svItem.alleles, qual=svItem.qual, filter=svItem.filter)
@@ -335,7 +351,7 @@ class SVCombine:
             tabix_index(out_vcf.replace("lr", mode), force=True, preset="vcf")
     
     def output_sv_quick(self, result_df):
-        out_vcf = self.fileList[0].replace("hap1", "dsa")
+        out_vcf = self.fileList[0].replace(self.config["refs"]["1"], "merge")
         vcf1 = VariantFile(self.fileList[0])
         # if "MatchScore" not in vcf1.header.info:
         #     vcf1.header.info.add("MatchScore", number=1, type="Float", description="Match score between two SVs")
@@ -363,7 +379,10 @@ class SVCombine:
                 svItem.info["MatchSV"] = match_sv
                 outVCF.write(svItem)
                 n_out += 1
-            elif self.check_normal_supp(svItem):
+            elif self.iffilter and self.check_normal_supp(svItem):
+                outVCF.write(svItem)
+                n_out += 1
+            elif not self.iffilter:
                 outVCF.write(svItem)
                 n_out += 1
         for svItem in vcf2.fetch():
@@ -371,7 +390,7 @@ class SVCombine:
             sv_id = str(svItem.pos) + "%" + str(pos2) + "%" + str(get_sv_len(svItem)) + "%" + svItem.id
             match_sv = result_df[result_df["hap2"] == sv_id]["hap1"].values[0]
             if match_sv == 0:
-                if not self.check_normal_supp(svItem):
+                if self.iffilter and not self.check_normal_supp(svItem):
                     continue
                 new_record = header.new_record(contig=svItem.contig, start=svItem.pos, stop=svItem.stop, id=svItem.id, alleles=svItem.alleles, qual=svItem.qual, filter=svItem.filter)
                 for key in svItem.info.keys():
@@ -424,78 +443,3 @@ class SVCombine:
             else:
                 norm = 1
             return norm <= 3
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Merge SVs between two SV vcf files from different ref genomes (using Jaccard similarity and supporting reads.)")
-    parser.add_argument("-i", "--corr_txt", type=str, default=None)
-    parser.add_argument("-f", "--fileformat", type=str, nargs='+', default=["/home/yuz006/disk/sv_calls/cancer_public/grch38_h2009_merge_15callset_highconfi_lr.vcf.gz"])
-    parser.add_argument("-r", "--refs", type=str, nargs='+', default=["grch38", "hap1", "hap2"])
-    parser.add_argument("-o", "--output", type=str, default="./corrMerge_mbm.txt")
-    parser.add_argument("-t", "--threshold", type=float, default=0.5, help="Threshold for min match score, default is 0.3 (excluded)")
-    parser.add_argument("--highconfi", action="store_true", help="If given, use high confidence genotyping across ill, hifi and ont.")
-    parser.add_argument("-v", "--verbose", action="store_true", help="If given, show debug messages.")
-    args = parser.parse_args()
-
-    # SVCombine(args.corr_txt, args.fileformat, args.refs, args.output, verbose=args.verbose, threshold=args.threshold, ifhighconfi=args.highconfi).run()
-    # load corrMerge.txt
-    # for c in ["h1437", "h2009", "hcc1937"]:
-    #     corr_txt = f"/home/yuz006/disk/t2t_assembly/cancer_public/verkko/hap_only_vali/{c}_corrMax.txt"
-    #     corr_matrix = pd.read_csv(corr_txt, sep=",", header=0)
-    #     n = 0
-    #     yes = 0
-    #     matched_svs =  {}
-    #     yes_svs = set()
-    #     for index, row in corr_matrix.iterrows():
-    #         if row["dsa"] != "0":
-    #             n += 1
-    #             matched_svs[row["dsa"]] = row["hap1"] + "-" + row["hap2"]
-    #             if row["hap1"] != "0" or row["hap2"] != "0":
-    #                 yes += 1
-    #                 yes_svs.add(row["dsa"])
-        
-    #     from utils import loadDict
-    #     region_dict = loadDict(f"/home/yuz006/disk/t2t_assembly/cancer_public/a_{c}_for_igv/{c}bl_hap1.fa.satellite.bed")
-    #     region_dict = loadDict(f"/home/yuz006/disk/t2t_assembly/cancer_public/a_{c}_for_igv/{c}bl_hap2.fa.satellite.bed", region_dict)
-    
-
-    #     vcf = VariantFile(f"/home/yuz006/disk/t2t_assembly/cancer_public/verkko/hap_only_vali/dsa_{c}_merge_15callset_highconfi_lr.vcf.gz")
-    #     severus = 0
-    #     yes_severus = 0
-    #     for record in vcf:
-    #         chrom2, pos2 = get_sv_end(record)
-    #         sv_id = str(record.pos) + "%" + str(pos2) + "%" + str(get_sv_len(record)) + "%" + record.id
-    #         ifcentr = False
-    #         ifsatellite = False
-    #         overlap_region = region_dict[record.chrom][record.pos]
-    #         overlap_centr = [reg for reg in list(overlap_region) if reg.data == "Satellite/centr"]
-    #         overlap_region2 = region_dict[chrom2][pos2]
-    #         overlap_centr += [reg for reg in list(overlap_region2) if reg.data == "Satellite/centr"]
-    #         if len(overlap_centr) > 0:
-    #             ifcentr = True
-    #         if len(overlap_region) > 0 or len(overlap_region2) > 0:
-    #             ifsatellite = True
-    #         if sv_id in matched_svs:
-    #             if ifsatellite:
-    #                 severus += 1
-    #             if ifcentr:
-    #                 yes_severus += 1
-    #             # if "nanomonsv-hifi" in record.info["Support"] or "pbsv-hifi" in record.info["Support"] or \
-    #             #     "severus-hifi" in record.info["Support"] :
-    #             #     severus += 1
-    #             #     if sv_id in yes_svs:
-    #             #         yes_severus += 1
-    #             #     print(c, sv_id, record.chrom, record.pos, record.info["SVTYPE"], record.info["SVLEN"] if "SVLEN" in record.info else 0, matched_svs[sv_id], record.info["Support"], ifsatellite, ifcentr)
-    #     vcf.close()
-    #     print(c, n, yes, len(matched_svs), severus, yes_severus, yes_severus/severus)
-
-    df = pd.read_csv("/home/yuz006/ha.csv", sep=",", header=0)
-    
-    # traverse each line
-    for i, row in df.iterrows():
-        vcf = VariantFile(f"/home/yuz006/disk/sv_calls/cancer_public/dsa_{row[0]}_merge_15callset_highconfi_lr.vcf.gz")
-        for record in vcf:
-            chrom2, pos2 = get_sv_end(record)
-            sv_id = str(record.pos) + "%" + str(pos2) + "%" + str(get_sv_len(record)) + "%" + record.id
-            if sv_id == row[1]:
-                print(record.info["AF"])
-        vcf.close()
