@@ -1,7 +1,7 @@
 # EchoSV
 ## Overview
 EchoSV is a versatile tool for comparing and merging structural variant (SV) call sets that were generated using different reference genomes. It studies how SVs "echo" across these references through a hybrid workflow that combines lift-over and graph-based matching.
-![EchoSV Workflow](./echosv_workflow.pdf)
+![EchoSV Workflow](./echosv_workflow.jpg)
 Given two or more SV call sets from the same sample—each aligned to a different reference—EchoSV can perform two primary operations:
 - **Merge**: Consolidates multiple SV call sets into a single, unified output. For example, it can merge two DSA haplotype–based call sets into one consolidated file.
 - **Compare**: Generates a detailed comparison identifying overlapping variants and those exclusive to a specific reference, such as when analyzing calls across GRCh38, CHM13, and DSA.
