@@ -81,8 +81,8 @@ echosv genotype --longread -i test_data/input_data/grch38_colo829_somatic_svs.vc
 ```
 
 **Parameters:**
-- `--longread`: Genotyping SVs from long-read alignments
-- `--shortread`: Genotyping SVs from short-read alignments
+- `--longread`: If given, genotyping SVs from long-read alignments
+- `--shortread`: If given, genotyping SVs from short-read alignments
 - `-i`: Input SV vcf file
 - `-b`: Bam file(s)
 - `-o`: Output VCF with genotyped info
@@ -101,6 +101,7 @@ echosv match -i test_data/test_colo829_config.json
 
 **Parameters:**
 - `-i`: Input config file, see example as ./test_data/test_colo829_config.json
+- `--multiplat`: If given, use multi-platform genotyping info.
 - `--merge`: If given, merge concordant SVs across references and derive a single VCF.
 - `--min_echo_score`: Minimum echo score to consider an SV for matching (default: 0.5).
 

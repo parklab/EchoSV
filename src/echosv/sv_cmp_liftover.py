@@ -64,7 +64,10 @@ def sv_cmp_liftover(config, WINDOW_SIZE=500):
     for ref_index, ref in config["refs"].items():
         if ref != ref1:
             chain = load_chain(config["chains"][f"{ref_index}_to_1"])
-            goodTree = loadBed(config["chains"][f"{ref_index}_to_1"].replace(".chain.gz", ".bed"), goodonly=True)
+            bedfiles = glob.glob(config["chains"][f"{ref_index}_to_1"].replace(".chain.gz", ".bed"))
+            goodTree = []
+            for bedfile in bedfiles:
+                goodTree.append(loadBed(bedfile, goodonly=True))
         vcf = VariantFile(config["vcfs"][ref_index])
         sv_pos_dict[ref] = defaultdict(IntervalTree)
         for record in vcf.fetch():
@@ -72,10 +75,16 @@ def sv_cmp_liftover(config, WINDOW_SIZE=500):
             chrom2, pos2 = get_sv_end(record, ins_pseudoPos=False)
             end_pos = pos2
             if ref != ref1:
-                chrom1, pos1 = liftover(chrom1, pos1, window_size=50, chain_dict=chain, bed_tree=goodTree)
+                if "h2tg" in chrom1:
+                    chrom1, pos1 = liftover(chrom1, pos1, window_size=50, chain_dict=chain, bed_tree=goodTree[1])
+                else:
+                    chrom1, pos1 = liftover(chrom1, pos1, window_size=50, chain_dict=chain, bed_tree=goodTree[0])
                 if chrom1 == None or pos1 == None:
                     continue
-                chrom2, pos2 = liftover(chrom2, pos2, window_size=50, chain_dict=chain, bed_tree=goodTree)
+                if "h2tg" in chrom2:
+                    chrom2, pos2 = liftover(chrom2, pos2, window_size=50, chain_dict=chain, bed_tree=goodTree[1])
+                else:
+                    chrom2, pos2 = liftover(chrom2, pos2, window_size=50, chain_dict=chain, bed_tree=goodTree[0])
                 if chrom2 == None or pos2 == None:
                     continue
             sv_id = "%".join([record.info["SVTYPE"], chrom1, str(pos1), chrom2, str(pos2), str(record.pos), str(end_pos), str(get_sv_len(record)), record.id])
