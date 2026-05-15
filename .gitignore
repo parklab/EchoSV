@@ -1,3 +1,4 @@
 src/echosv/__pycache__/
 test_data/
 build/
+src/echosv.egg-info/

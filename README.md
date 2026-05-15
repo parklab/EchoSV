@@ -59,9 +59,7 @@ tar -xzvf echosv_test_data.tar.gz
 
 ### Step 1: Generate chains
 
-The `chain` command generates a liftover chain file that maps coordinates from **ref2** (the source assembly) to **ref1** (the target reference). A companion coverage BED file is written alongside the chain.
-
-Before running `chain`, align ref2 against ref1 using [minimap2](https://github.com/lh3/minimap2)'s asm-to-asm mode and index the output:
+The `chain` command generates a liftover chain file that maps coordinates from **ref2** (the source assembly) to **ref1** (the target reference). Before running `chain`, align ref2 against ref1 using [minimap2](https://github.com/lh3/minimap2)'s asm-to-asm mode and index the output:
 
 ```bash
 minimap2 -a -x asm5 --cs ref1.fa ref2.fa \
@@ -70,7 +68,7 @@ minimap2 -a -x asm5 --cs ref1.fa ref2.fa \
 samtools index ref2_to_ref1.bam
 ```
 
-Then generate the chain file. The `-f` flag points to the **ref2** FASTA so that EchoSV can read its contig lengths. EchoSV looks for a pre-built index automatically in this order: `<fasta>.fai` (samtools faidx) → `<fasta>.dict` (Picard / samtools dict) → `<stem>.dict`. If none exist, the FASTA is parsed directly (slower for large assemblies). You can generate an index with `samtools faidx ref2.fa` or `samtools dict ref2.fa > ref2.fa.dict`.
+Then generate the chain file. EchoSV looks for a pre-built index automatically in this order: `<fasta>.fai` (samtools faidx) → `<fasta>.dict` (Picard / samtools dict) → `<stem>.dict`. If none exist, the FASTA is parsed directly (slower for large assemblies). You can generate an index with `samtools faidx ref2.fa` or `samtools dict ref2.fa > ref2.fa.dict`.
 
 ```bash
 echosv chain \
@@ -80,15 +78,13 @@ echosv chain \
 ```
 
 **Parameters:**
-| Flag | Description |
-|------|-------------|
-| `-b` | Path to the ref2-to-ref1 alignment (BAM format, must be indexed) |
-| `-f` | Path to the ref2 reference FASTA |
-| `-o` | Output chain file for coordinate mapping (a coverage BED file is also written alongside) |
+-  `-b`: Path to the ref2-to-ref1 alignment (BAM format, must be indexed)
+-  `-f`: Path to the ref2 reference FASTA
+-  `-o`: Output chain file for coordinate mapping (a coverage BED file is also written alongside)
 
 ### Step 2: Merge SV call sets from the same reference (optional)
 
-The `merge` command merges multiple SV call sets that were called against the **same** reference genome (e.g., outputs from several callers or haplotypes). It annotates each merged record with the list of supporting callers (`Support`) and per-caller variant details (`Backup`). This step is typically run before `genotype` and `match` so that each reference has a single unified call set for cross-reference comparison.
+The `merge` command merges multiple SV call sets that were called against the **same** reference genome (e.g., outputs from multiple callers). This step is typically run before `genotype` and `match` so that each reference has a single unified call set for cross-reference comparison.
 
 ```bash
 # Merge multiple VCFs from the same reference into a single call set
@@ -107,17 +103,15 @@ echosv merge \
 Pre-built gap BED files for the references used in this study are provided in the `beds/` directory; a new gap BED can be passed by using `--gapbed`.
 
 **Parameters:**
-| Flag | Description |
-|------|-------------|
-| `-i` | Input VCF file(s) — space-separated list for `--merge`, single file for `--extract` |
-| `-o` | Output file path |
-| `-a / --atol` | Positional tolerance in bp for matching breakpoints (default: 500) |
-| `-s / --sizetol` | Minimum size-similarity ratio for matching SVs (default: 0.5) |
-| `-c / --checksvtype` | Require matching SV types when merging |
-| `--merge` | Write a merged VCF from the comparison result |
-| `--new` | Build merged VCF records from scratch (use with `--merge`) |
-| `--extract` | Extract high-confidence SVs (≥4 supporting callers and ≥2 platforms) |
-| `--gapbed` | BED file of reference gap / N regions; SVs near gaps are excluded when using `--extract` |
+-  `-i`: Input VCF file(s) — space-separated list for `--merge`, single file for `--extract`
+-  `-o`: Output file path
+-  `-a / --atol`: Positional tolerance in bp for matching breakpoints (default: 500)
+-  `-s / --sizetol`: Minimum size-similarity ratio for matching SVs (default: 0.5)
+-  `-c / --checksvtype`: Require matching SV types when merging
+-  `--merge`: Write a merged VCF from the comparison result
+-  `--new`: Build merged VCF records from scratch (use with `--merge`)
+-  `--extract`: Extract high-confidence SVs (≥4 supporting callers and ≥2 platforms)
+-  `--gaps-bed`: BED file of reference gap / N regions; SVs near gaps are excluded when using `--extract`
 
 ### Step 3: Collect supporting reads
 
@@ -131,13 +125,11 @@ echosv genotype --longread \
 ```
 
 **Parameters:**
-| Flag | Description |
-|------|-------------|
-| `--longread` | Collect supporting reads from long-read alignments |
-| `--shortread` | Collect supporting reads from short-read alignments |
-| `-i` | Input SV VCF file |
-| `-b` | BAM file(s) — multiple BAMs can be provided space-separated |
-| `-o` | Output VCF with annotated supporting-read information |
+-  `--longread`: Collect supporting reads from long-read alignments
+-  `--shortread`: Collect supporting reads from short-read alignments
+-  `-i`: Input SV VCF file
+-  `-b`: BAM file(s) — multiple BAMs can be provided space-separated
+-  `-o`: Output VCF with annotated supporting-read information
 
 ### Step 4: Match SVs across references
 
@@ -166,12 +158,10 @@ The input is a JSON config file specifying reference labels, genotyped VCFs, cha
 ```
 
 **Parameters:**
-| Flag | Description |
-|------|-------------|
-| `-i` | Input config JSON file |
-| `--merge` | Merge concordant SVs across references and write a unified VCF |
-| `--multiplat` | Use multi-platform genotyping information during matching |
-| `-m / --min_echo_score` | Minimum echo score to consider two SVs a match (default: 0.5) |
+-  `-i`: Input config JSON file
+-  `--merge`: Merge concordant SVs across references and write a unified VCF
+-  `--multiplat`: Use multi-platform genotyping information during matching
+-  `-m / --min_echo_score`: Minimum echo score to consider two SVs a match (default: 0.5)
 
 ## License
 
