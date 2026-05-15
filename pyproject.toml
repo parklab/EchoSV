@@ -26,3 +26,5 @@ dependencies = [
 [project.scripts]
 echosv = "echosv.main:main"
 
+[tool.setuptools.package-data]
+echosv = ["beds/*.bed"]

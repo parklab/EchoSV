@@ -91,7 +91,7 @@ echosv chain \
 <details>
 <summary>Merge multi-caller VCFs from the same reference into one call set before genotyping.</summary>
 
-The `merge` command merges multiple SV call sets that were called against the **same** reference genome (e.g., outputs from multiple callers). This step is typically run before `genotype` and `match` so that each reference has a single unified call set for cross-reference comparison.
+The `merge` command merges multiple SV call sets that were called against the **same** reference genome (e.g., outputs from multiple callers). This step is typically run before `genotype` and `match` so that each reference has a single unified call set for cross-reference comparison. Scripts to reproduce the analysis from our [paper](https://www.biorxiv.org/content/10.1101/2025.10.28.685155v1.abstract) are available in `scripts/`.
 
 ```bash
 # Merge multiple VCFs from the same reference into a single call set
