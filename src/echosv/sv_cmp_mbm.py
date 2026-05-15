@@ -91,7 +91,8 @@ class SVCombine:
                  threshold=0.5, 
                  ifmultiplat=False,
                  ifmerge=False,
-                 iffilter=False,):
+                 iffilter=False,
+                 ):
         self.config = config
         self.corr_txt = self.config["output"].replace(".txt", "_liftover.txt")
         self.reflist = list(self.config["refs"].values())
@@ -192,10 +193,12 @@ class SVCombine:
                         base_sv = base_new_order[base_sv_index]
                         cmp_sv = cmp_new_order[cmp_sv_index]
                         if base_sv not in pre_svs[base_ref] or cmp_sv not in pre_svs[cmp_ref]:
-                            # print("Find novel match for SV in difficult region", base_ref, base_sv, base_sv not in pre_svs[base_ref], cmp_ref, cmp_sv, cmp_sv not in pre_svs[cmp_ref], "score", match_matrix[base_sv_index, cmp_sv_index], len(base_sv_dict[base_sv]), len(cmp_sv_dict[cmp_sv]))
+                            # if self.verbose:
+                            #     print("Find a novel match for SV in difficult region", base_ref, base_sv, base_sv not in pre_svs[base_ref], cmp_ref, cmp_sv, cmp_sv not in pre_svs[cmp_ref], "score", match_matrix[base_sv_index, cmp_sv_index], len(base_sv_dict[base_sv]), len(cmp_sv_dict[cmp_sv]))
                             n_novel_match_difficult += 1
                         else:
-                            # print("Find novel match for SV in easy region", base_ref, base_sv, cmp_ref, cmp_sv, "score", match_matrix[base_sv_index, cmp_sv_index], len(base_sv_dict[base_sv]), len(cmp_sv_dict[cmp_sv]))
+                            # if self.verbose:
+                            #     print("Find a novel match for SV in easy region", base_ref, base_sv, cmp_ref, cmp_sv, "score", match_matrix[base_sv_index, cmp_sv_index], len(base_sv_dict[base_sv]), len(cmp_sv_dict[cmp_sv]))
                             n_novel_match_easy += 1
                         base_sv_index = base_svs.index(base_sv)
                         cmp_sv_index = cmp_svs.index(cmp_sv)
@@ -352,77 +355,95 @@ class SVCombine:
     
     def output_sv_quick(self, result_df):
         out_vcf = self.fileList[0].replace(self.config["refs"]["1"], "merge")
-        vcf1 = VariantFile(self.fileList[0])
-        # if "MatchScore" not in vcf1.header.info:
-        #     vcf1.header.info.add("MatchScore", number=1, type="Float", description="Match score between two SVs")
-        if "MatchSV" not in vcf1.header.info:
-            vcf1.header.info.add("MatchSV", number=1, type="String", description="Matched SV id")
-        n_out = 0
-        vcf2 = VariantFile(self.fileList[1])
-        header = VariantHeader()
-        for record in vcf1.header.records:
-            if record.key != "contig":
-                header.add_record(record)
-        for contig_name, contig_info in vcf1.header.contigs.items():
-            header.contigs.add(contig_name, length=contig_info.length)
-        for contig_name, contig_info in vcf2.header.contigs.items():
-            header.contigs.add(contig_name, length=contig_info.length)
-        for i in range(2):
-            header.add_sample(f"SAMPLE{i}") 
-        outVCF = VariantFile(out_vcf, "w", header=header)
-        for svItem in vcf1:
-            chrom2, pos2 = get_sv_end(svItem)
-            sv_id = str(svItem.pos) + "%" + str(pos2) + "%" + str(get_sv_len(svItem)) + "%" + svItem.id
-            # check if the sv is in the result_df["hap1"]
-            match_sv = result_df[result_df["hap1"] == sv_id]["hap2"].values[0]
-            if match_sv != 0:
-                svItem.info["MatchSV"] = match_sv
-                outVCF.write(svItem)
-                n_out += 1
-            elif self.iffilter and self.check_normal_supp(svItem):
-                outVCF.write(svItem)
-                n_out += 1
-            elif not self.iffilter:
-                outVCF.write(svItem)
-                n_out += 1
-        for svItem in vcf2.fetch():
-            chrom2, pos2 = get_sv_end(svItem)
-            sv_id = str(svItem.pos) + "%" + str(pos2) + "%" + str(get_sv_len(svItem)) + "%" + svItem.id
-            match_sv = result_df[result_df["hap2"] == sv_id]["hap1"].values[0]
-            if match_sv == 0:
-                if self.iffilter and not self.check_normal_supp(svItem):
-                    continue
-                new_record = header.new_record(contig=svItem.contig, start=svItem.pos, stop=svItem.stop, id=svItem.id, alleles=svItem.alleles, qual=svItem.qual, filter=svItem.filter)
-                for key in svItem.info.keys():
-                    new_record.info[key] = svItem.info[key]
-                for index, key in enumerate(svItem.samples.keys()):
-                    new_record.samples[f"SAMPLE{index}"]["AF"] = svItem.samples[key]["AF"]
-                    af = svItem.samples[key]["AF"]
-                    if isinstance(af, tuple):
-                        af = af[0]
-                    if af == 0:  
-                        new_record.samples[f"SAMPLE{index}"]["RNAMES"] = ""
-                        if "RHAP" in svItem.samples[key]:
-                            new_record.samples[f"SAMPLE{index}"]["RHAP"] = ""
-                    else:
-                        new_record.samples[f"SAMPLE{index}"]["RNAMES"] = ",".join(svItem.samples[key]["RNAMES"])
-                        if "RHAP" in svItem.samples[key]:
-                            new_record.samples[f"SAMPLE{index}"]["RHAP"] = svItem.samples[key]["RHAP"]
-                new_record.pos = svItem.pos
-                new_record.stop = svItem.stop
-                new_record.info["SVTYPE"] = svItem.info["SVTYPE"]
-                if not (new_record.chrom == svItem.chrom and new_record.pos == svItem.pos and new_record.stop == svItem.stop):
-                    raise ValueError("The new record is not the same as the original record", str(svItem), str(new_record))
-                outVCF.write(new_record)
-                n_out += 1
-        outVCF.close()
-        vcf1.close()
-        vcf2.close()
-        print("Output {} from {} SVs to {}".format(n_out, len(result_df), out_vcf))
-        tabix_index(out_vcf, force=True, preset="vcf")
+        chosen_svs = set()
+        if self.ifmultiplat:
+            plats = ["lr", "sr"]
+        else:
+            plats = ["lr"]
+        for mode in plats:
+            vcf1 = VariantFile(self.fileList[0].replace("lr", mode))
+            # if "MatchScore" not in vcf1.header.info:
+            #     vcf1.header.info.add("MatchScore", number=1, type="Float", description="Match score between two SVs")
+            if "MatchSV" not in vcf1.header.info:
+                vcf1.header.info.add("MatchSV", number=1, type="String", description="Matched SV id")
+            n_out = 0
+            vcf2 = VariantFile(self.fileList[1].replace("lr", mode))
+            header = VariantHeader()
+            for record in vcf1.header.records:
+                if record.key != "contig":
+                    header.add_record(record)
+            for contig_name, contig_info in vcf1.header.contigs.items():
+                header.contigs.add(contig_name, length=contig_info.length)
+            for contig_name, contig_info in vcf2.header.contigs.items():
+                if contig_name not in header.contigs:
+                    header.contigs.add(contig_name, length=contig_info.length)
+            n_samples = len(vcf1.header.samples)
+            for i in range(n_samples):
+                header.add_sample(f"SAMPLE{i}") 
+            outVCF = VariantFile(out_vcf.replace("lr", mode), "w", header=header)
+            for svItem in vcf1:
+                chrom2, pos2 = get_sv_end(svItem)
+                sv_id = str(svItem.pos) + "%" + str(pos2) + "%" + str(get_sv_len(svItem)) + "%" + svItem.id
+                # check if the sv is in the result_df["hap1"]
+                match_sv = result_df[result_df["hap1"] == sv_id]["hap2"].values[0]
+                if match_sv != 0:
+                    svItem.info["MatchSV"] = match_sv
+                    outVCF.write(svItem)
+                    chosen_svs.add(sv_id)
+                    n_out += 1
+                elif self.iffilter and self.check_normal_supp(svItem):
+                    if mode == "lr":
+                        outVCF.write(svItem)
+                        chosen_svs.add(sv_id)
+                        n_out += 1
+                    elif mode == "sr":
+                        outVCF.write(svItem)
+                        n_out += 1
+                elif not self.iffilter:
+                    outVCF.write(svItem)
+                    n_out += 1
+            for svItem in vcf2.fetch():
+                chrom2, pos2 = get_sv_end(svItem)
+                sv_id = str(svItem.pos) + "%" + str(pos2) + "%" + str(get_sv_len(svItem)) + "%" + svItem.id
+                match_sv = result_df[result_df["hap2"] == sv_id]["hap1"].values[0]
+                if match_sv == 0:
+                    if self.iffilter and not self.check_normal_supp(svItem) and mode == "lr":
+                        continue
+                    if mode == "sr" and sv_id not in chosen_svs:
+                        continue
+                    new_record = header.new_record(contig=svItem.contig, start=svItem.pos, stop=svItem.stop, id=svItem.id, alleles=svItem.alleles, qual=svItem.qual, filter=svItem.filter)
+                    for key in svItem.info.keys():
+                        new_record.info[key] = svItem.info[key]
+                    for index, key in enumerate(svItem.samples.keys()):
+                        new_record.samples[f"SAMPLE{index}"]["AF"] = svItem.samples[key]["AF"]
+                        af = svItem.samples[key]["AF"]
+                        if isinstance(af, tuple):
+                            af = af[0]
+                        if af == 0:  
+                            new_record.samples[f"SAMPLE{index}"]["RNAMES"] = ""
+                            if "RHAP" in svItem.samples[key]:
+                                new_record.samples[f"SAMPLE{index}"]["RHAP"] = ""
+                        else:
+                            new_record.samples[f"SAMPLE{index}"]["RNAMES"] = ",".join(svItem.samples[key]["RNAMES"])
+                            if "RHAP" in svItem.samples[key]:
+                                new_record.samples[f"SAMPLE{index}"]["RHAP"] = svItem.samples[key]["RHAP"]
+                    new_record.pos = svItem.pos
+                    new_record.stop = svItem.stop
+                    new_record.info["SVTYPE"] = svItem.info["SVTYPE"]
+                    if not (new_record.chrom == svItem.chrom and new_record.pos == svItem.pos and new_record.stop == svItem.stop):
+                        raise ValueError("The new record is not the same as the original record", str(svItem), str(new_record))
+                    outVCF.write(new_record)
+                    if mode == "lr":
+                        chosen_svs.add(sv_id)
+                    n_out += 1
+            outVCF.close()
+            vcf1.close()
+            vcf2.close()
+            print("Output {} from {} SVs to {}".format(n_out, len(result_df), out_vcf))
+            tabix_index(out_vcf, force=True, preset="vcf")
 
     def check_normal_supp(self, svItem):
-        if self.ifhighconfi:
+        if len(svItem.samples) == 4:    # t_hifi, t_ont, n_hifi, n_ont
             normal_hifi = svItem.samples[list(svItem.samples)[2]]['RHAP']
             normal_ont = svItem.samples[list(svItem.samples)[3]]['RHAP']
             if normal_hifi is None or normal_hifi == ".":

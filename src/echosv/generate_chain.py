@@ -10,24 +10,49 @@ import gzip, timeit, argparse, os
 from Bio import SeqIO
 from pysam import AlignmentFile
 
-def extract_contig_lengths(fasta_file, write_dict=False, verbose=True):
-    '''
-    Extract contig lengths from a fasta file.
-    '''
+def _parse_index_file(path):
+    """Parse a contig-length index file regardless of format.
+
+    Supports:
+      - Picard / samtools dict  (@SQ SN:<name>  LN:<len> ...)
+      - samtools faidx .fai     (<name>  <len>  <offset>  <bpl>  <Bpl>)
+      - custom two-column       (<name>  <len>)
+    """
     contig_lengths = {}
-    if os.path.exists(fasta_file.replace(".fa", ".fa.dict")):
-        dict_file = fasta_file.replace(".fa", ".fa.dict")
-        with open(dict_file, "r") as f:
-            for line in f:
-                info = line.strip().split("\t")
-                if info[0] == "@SQ":
-                    contig_lengths[info[1].split(":")[1]] = int(info[2].split(":")[1])
-    elif os.path.exists(fasta_file.replace(".fa", ".dict")):
-        dict_file = fasta_file.replace(".fa", ".dict")
-        with open(dict_file, "r") as f:
-            for line in f:
-                info = line.strip().split("\t")
-                contig_lengths[info[0]] = int(info[1])
+    with open(path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            fields = line.split("\t")
+            if fields[0] == "@SQ":                          # SAM-header dict
+                sn = next((v.split(":", 1)[1] for v in fields if v.startswith("SN:")), None)
+                ln = next((v.split(":", 1)[1] for v in fields if v.startswith("LN:")), None)
+                if sn and ln:
+                    contig_lengths[sn] = int(ln)
+            elif fields[0].startswith("@"):                 # @HD or other SAM header lines
+                continue
+            elif len(fields) >= 2:                          # fai (5-col) or custom 2-col
+                contig_lengths[fields[0]] = int(fields[1])
+    return contig_lengths
+
+
+def extract_contig_lengths(fasta_file, write_dict=False, verbose=True):
+    """Extract contig lengths from a FASTA file or its pre-built index.
+
+    Look-up order: <fasta>.fai  →  <fasta>.dict  →  <stem>.dict  →  parse FASTA.
+    All dict/fai formats (Picard, samtools dict, samtools faidx) are detected
+    automatically by _parse_index_file().
+    """
+    contig_lengths = {}
+    candidates = [
+        fasta_file + ".fai",
+        fasta_file + ".dict",
+        fasta_file.replace(".fa", ".dict"),
+    ]
+    index_file = next((p for p in candidates if os.path.exists(p)), None)
+    if index_file:
+        contig_lengths = _parse_index_file(index_file)
     else:
         with open(fasta_file, "r") as handle:
             for record in SeqIO.parse(handle, "fasta"):

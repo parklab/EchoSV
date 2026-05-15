@@ -11,6 +11,7 @@ from echosv.generate_chain import chain_main
 from echosv.genotype import genotype_main
 from echosv.match import match_main
 from rich.console import Console
+from echosv.sv_merge import merge_main
 
 USAGE = f"""\
 [bold]EchoSV v{echosv.__version__}[/] - Structural Variant Comparison and Merging Toolkit across Different Reference Genomes
@@ -18,6 +19,7 @@ USAGE = f"""\
 [bold cyan]chain[/]  Generate liftover chain file between two reference genomes 
 [bold cyan]genotype[/]  Collecting supporting reads of structural variants using long/short read BAMs
 [bold cyan]match[/]  Compare two/multi VCF files and generate a comparison result
+[bold cyan]merge[/]  Merge/compare two/multi VCF files from a same reference genome
 """
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -32,7 +34,7 @@ class ArgumentParser(argparse.ArgumentParser):
         console = Console(stderr=True)
         console.print(f'{self.prog}: error: {message}')
         if message.startswith("argument CMD: invalid choice"):
-            guess = echosv.help_unknown_cmd(sys.argv[1], ["chain", "genotype", "match"])
+            guess = echosv.help_unknown_cmd(sys.argv[1], ["chain", "genotype", "match", "merge"])
             if guess:
                 console.print(f"\nThe most similar command is\n\t[bold][cyan]{guess}[/][/]\n")
         self.exit(2)
@@ -50,7 +52,7 @@ def main():
     parser = ArgumentParser(prog="echosv", description=USAGE,
                             formatter_class=argparse.RawDescriptionHelpFormatter)
 
-    parser.add_argument("cmd", metavar="CMD", choices=["chain", "genotype", "match"], type=str, default=None,
+    parser.add_argument("cmd", metavar="CMD", choices=["chain", "genotype", "match", "merge"], type=str, default=None,
                         help="Command to execute")
     parser.add_argument("options", metavar="OPTIONS", nargs=argparse.REMAINDER,
                         help="Options to pass to the command")
@@ -64,7 +66,8 @@ def main():
         genotype_main(" ".join(args.options))
     elif args.cmd == "match":    
         match_main(" ".join(args.options))
-
+    elif args.cmd == "merge":
+        merge_main(" ".join(args.options))
 
 if __name__ == '__main__':
     main()

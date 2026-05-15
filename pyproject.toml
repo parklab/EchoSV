@@ -12,6 +12,16 @@ readme = "README.md"
 license = { text = "MIT" }
 dynamic = ["version"]
 requires-python = ">=3.8"
+dependencies = [
+    "pysam",
+    "intervaltree",
+    "biopython",
+    "scipy",
+    "networkx",
+    "pandas",
+    "numpy",
+    "rich",
+]
 
 [project.scripts]
 echosv = "echosv.main:main"

@@ -19,6 +19,7 @@ def match_main(params=None):
     parser.add_argument("--merge", action="store_true", help="Merge concordant SVs across references and derive a single VCF.")
     parser.add_argument("--filter", action="store_true", help="Use genotyping-based filter for merging SVs.")
     parser.add_argument("-m", "--min_echo_score", type=float, help="Minimum echo score to consider an SV for matching (default: 0.5).", default=0.5)
+    parser.add_argument("-v", "--verbose", action="store_true", help="Verbose mode.")
     if params is not None:
         if isinstance(params, str):
             params = params.split()
@@ -30,9 +31,9 @@ def match_main(params=None):
     with open(args.input, 'r') as f:
         config = json.load(f)
     start_time = timeit.default_timer()
-    df = sv_cmp_liftover(config=config)
+    df = sv_cmp_liftover(config=config, verbose=args.verbose)
     print(f"Match SVs through liftover: {timeit.default_timer() - start_time:.2f} seconds")
 
     start_time = timeit.default_timer()
-    SVCombine(config=config, iffilter=args.filter, ifmerge=args.merge, ifmultiplat=args.multiplat, threshold=args.min_echo_score).run()
+    SVCombine(config=config, iffilter=args.filter, ifmerge=args.merge, ifmultiplat=args.multiplat, threshold=args.min_echo_score, verbose=args.verbose).run()
     print(f"Match SVs through graph-based matching: {timeit.default_timer() - start_time:.2f} seconds")

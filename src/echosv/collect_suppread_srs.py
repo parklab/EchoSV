@@ -39,10 +39,14 @@ class AnnSV:
         self.ifWriteReadNames = ifWriteReadNames
         self.ratio_of_seqsize = ratio_of_seqsize
         self.verbose = verbose
+        self.soft_clip_start_pattern = re.compile(r'^[0-9]+[SH]')
+        self.soft_clip_end_pattern = re.compile(r'[0-9]+[SH]$')
 
     def _checkFile(self):
         if not os.path.exists(self.sv_vcf):
             raise FileNotFoundError("SV vcf file not found.")
+        elif "merge" in self.sv_vcf or "smaht" in self.sv_vcf or "truthset" in self.sv_vcf:
+            n_sv = _rowcount(VariantFile(self.sv_vcf))
         else:
             self.sv_vcf, n_sv = _checkVCF(self.sv_vcf)
         for bam in self.bam_list:
@@ -64,6 +68,7 @@ class AnnSV:
     def run(self):
         n_sv = self._checkFile()
         vcf = VariantFile(self.sv_vcf)
+        bam_handles = [AlignmentFile(bam_path, "rb") for bam_path in self.bam_list]
         # copy all header records except for the sample information
         header = VariantHeader()
         header.add_line("##params=MinMapQ={},DistThreshold={},WriteReadNames={},RatioOfSeqSize={}".format(
@@ -95,11 +100,12 @@ class AnnSV:
                 #record.samples[sample]['AF'] = svItem.samples[sample]['AF']
                 #record.samples[sample]['RNAMES'] = svItem.samples[sample]['RNAMES']
             # add sample information from each BAM
-            for sample_index in range(len(self.sampleList)):
+            for sample_index, bam in enumerate(bam_handles):
                 sampleName = self.sampleList[sample_index]
-                self.bam = AlignmentFile(self.bam_list[sample_index], "rb")
+                # self.bam = AlignmentFile(self.bam_list[sample_index], "rb")
+                self.bam = bam
                 supp_reads, af = self.get_sv_reads(svItem)
-                self.bam.close()
+                # self.bam.close()
             
                 record.samples[sampleName]['AF'] = af
                 if self.ifWriteReadNames:
@@ -118,6 +124,9 @@ class AnnSV:
             #    print(svItem, svItem.info['AF'], af, len(supp_reads), cov)
             #    n_region_sv += 1
         print("Number of SVs in interested regions: {} out of {}".format(n_region_sv, n_sv))
+        for bam in bam_handles:
+            bam.close()
+        vcf.close()
         annoVcf.close()
         tabix_index(self.out_file, preset="vcf", force=True)
 
@@ -268,7 +277,7 @@ class AnnSV:
                     # if isSupport:   # the read has matched breakpoint with soft-clip
                     #     supp_reads.add(read_name)
                     #     n_left_read += 1
-                    if isSupport == False and aln.reference_start < pos1 < aln.reference_end and read.is_proper_pair: # ref-supporting read
+                    if isSupport == False and aln.reference_start < pos1 < aln.reference_end and aln.is_proper_pair: # ref-supporting read
                         unsupp_reads.add(read_name)
                         n_unsupp_left += 1
         #         else:
@@ -355,13 +364,11 @@ class AnnSV:
         Overestimate the supp reads.
         '''
         cigarstring = read.cigarstring
-        soft_clip_start_pattern = re.compile(r'^[0-9]+[SH]')
-        soft_clip_end_pattern = re.compile(r'[0-9]+[SH]$')
         clp_pos_list = []
-        start_match = soft_clip_start_pattern.search(cigarstring)
+        start_match = self.soft_clip_start_pattern.search(cigarstring)
         if bool(start_match) and int(start_match.group(0)[:-1]) >= mismatch_thre:
             clp_pos_list.append(left_end)
-        end_match = soft_clip_end_pattern.search(cigarstring)
+        end_match = self.soft_clip_end_pattern.search(cigarstring)
         if bool(end_match) and int(end_match.group(0)[:-1]) >= mismatch_thre:
             clp_pos_list.append(right_end)
         if len(clp_pos_list) == 0:

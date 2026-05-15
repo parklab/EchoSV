@@ -1,0 +1,8 @@
+pysam
+intervaltree
+biopython
+scipy
+networkx
+pandas
+numpy
+rich

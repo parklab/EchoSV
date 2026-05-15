@@ -7,6 +7,130 @@
 '''
 import os
 from pysam import VariantFile, tabix_index, FastaFile
+import numpy as np
+
+def get_sv_end(svItem, ins_pseudoPos=False):
+    if "CHROM2" in svItem.info.keys():
+        chrom2 = svItem.info["CHROM2"]
+        pos2 = svItem.stop
+    elif "SVTYPE" in svItem.info and (svItem.info['SVTYPE'] == "BND" or svItem.info['SVTYPE'] == "TRANS"):
+        if len(svItem.alts) == 1:
+            chrom2, pos2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")
+        else:
+            raise ValueError("BND format error")
+    else:
+        chrom2 = svItem.chrom
+        pos2 = svItem.stop
+    if pos2 == svItem.pos and svItem.info["SVTYPE"] == "BND":
+        chrom2, pos2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")
+    pos2 = int(pos2)
+    if svItem.info["SVTYPE"] == "INS" and (pos2 - svItem.pos) < 30:
+        pos2 = svItem.pos
+        if ins_pseudoPos:
+            pos2 += get_sv_len(svItem)
+    return chrom2, pos2
+
+def get_sv_type(svItem):
+    svtype = None
+    if "SVTYPE" in svItem.info:
+        svtype = svItem.info["SVTYPE"]
+    elif "REPTYPE" in svItem.info:
+        svtype = svItem.info["REPTYPE"]
+    else:
+        raise Exception("No SVTYPE or REPTYPE found in vcf file.")
+    
+    if svtype == "BND":
+        chrom2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")[0]
+        if chrom2 != svItem.chrom:  # severus
+            return svtype
+        if "DETAILED_TYPE" in svItem.info:  
+            if svItem.info["DETAILED_TYPE"] == "tandem_duplication" or svItem.info["DETAILED_TYPE"] == "Templated_ins":
+                svtype = "DUP"
+        if svtype == "BND" and "STRANDS" in svItem.info:
+            strands = svItem.info["STRANDS"]
+            if strands == "+-":
+                svtype = "DEL"
+            elif strands == "++" or strands == "--":
+                svtype = "INV"
+            elif strands == "-+":
+                svtype = "DUP"
+
+    return svtype
+
+def get_sv_len(svItem):
+    svlen = 0
+    if "SVLEN" in svItem.info:
+        if isinstance(svItem.info["SVLEN"], int) or isinstance(svItem.info["SVLEN"], float):
+            svlen = svItem.info["SVLEN"]
+        else:
+            svlen = svItem.info["SVLEN"][0]
+    elif "SVTYPE" in svItem.info and (svItem.info['SVTYPE'] == "INS" or "I-Mosaic" in svItem.id):
+        if svItem.alts[0] == "<INS>":
+            svlen = svItem.info["SVINSLEN"]
+        else:
+            svlen = len(svItem.alts[0]) - len(svItem.ref)
+    if svlen == 0 and svItem.info["SVTYPE"] == "BND":
+        chrom2, pos2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")
+        if chrom2 == svItem.chrom:
+            svlen = int(pos2) - svItem.pos
+    return abs(int(svlen))
+
+def _getVAF(rec, n_sample=0):
+    if "VAF" in rec.info:
+        af = rec.info["VAF"]
+        if not isinstance(af, float):
+            af = af[1]
+        return np.round(af, 6), np.round(af, 6)
+    if "AF" in rec.info:
+        af = rec.info["AF"]
+        if not isinstance(af, float):
+            af = af[0]
+        if af is None:
+            af = np.nan
+        return np.round(af, 6), np.round(af, 6)
+    # elif "TAF" in rec.info:
+        # af = rec.info["TAF"][n_sample]
+    if "RR" in rec.samples[n_sample] and "RV" in rec.samples[n_sample]: # delly
+        if "PRECISE" in rec.info:
+            depth = rec.samples[n_sample]["RR"] + rec.samples[n_sample]["RV"]
+            numerator = rec.samples[n_sample]["RV"]
+        elif "IMPRECISE" in rec.info:
+            depth = rec.samples[n_sample]["DR"] + rec.samples[n_sample]["DV"]
+            numerator = rec.samples[n_sample]["DV"] 
+    elif "VF" in rec.samples[n_sample] and "REF" in rec.samples[n_sample] and "REFPAIR" in rec.samples[n_sample]:   # gridss
+        if rec.info["SVTYPE"] == "BND" or abs(rec.info["SVLEN"][0]) >= 1000:
+            depth = rec.samples[n_sample]["VF"] + rec.samples[n_sample]["REF"] + rec.samples[n_sample]["REFPAIR"]
+        else:
+            depth = rec.samples[n_sample]["VF"] + rec.samples[n_sample]["REF"]
+        numerator = rec.samples[n_sample]["VF"] 
+    elif "DR" in rec.samples[n_sample] and "DV" in rec.samples[n_sample]:   # severus
+        depth = rec.samples[n_sample]["DR"] + rec.samples[n_sample]["DV"]
+        numerator = rec.samples[n_sample]["DV"]
+    elif "AD" in rec.samples[n_sample] and "DP" in rec.samples[n_sample]:   # pbsv, svaba, cutesv
+        depth = rec.samples[n_sample]["DP"]
+        numerator = rec.samples[n_sample]["AD"]
+        if not isinstance(numerator, int):
+            numerator = numerator[1]
+    elif "WEIGHT" in rec.info and "COV" in rec.info:    # svdss
+        depth = rec.info["COV"]
+        numerator = rec.info["WEIGHT"]
+    elif "TUMOUR_TOTAL_HP_AT" in rec.info:  # savana
+        depth = sum(rec.info["TUMOUR_TOTAL_HP_AT"])
+        numerator = sum(rec.info["TUMOUR_ALT_HP"])
+    elif "AD" in rec.samples[n_sample]: # sawfish
+        numerator = rec.samples[n_sample]["AD"][1]
+        depth = rec.samples[n_sample]["AD"][0] + numerator
+    elif "TR" in rec.samples[n_sample] and "VR" in rec.samples[n_sample]:   # nanomonsv
+        numerator = rec.samples[n_sample]["VR"]
+        depth = rec.samples[n_sample]["TR"] 
+    else:
+        print(rec)
+        raise Exception("No VAF information found in VCF file.")
+    if depth:
+        af = numerator/depth
+    else:
+        af = np.nan
+    return np.round(af, 6), numerator
 
 def svtype_extract(vcfFile, 
                    svtype=None, 
@@ -120,7 +244,7 @@ def removeDup(vcfFile, dupSet, passonly=True):
             elif "MATE_ID" in svItem.info and (svItem.id[-2:] == "_1" or svItem.id[-2:] == "_2") and svItem.id[:-2] in dupSet:  # severus
                 chrom1 = svItem.chrom
                 pos1 = svItem.pos
-                chrom2, pos2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")
+                chrom2, pos2 = get_sv_end(svItem)
                 if chroms(chrom1) < chroms(chrom2) or (chroms(chrom1) == chroms(chrom2) and pos1 <= int(pos2)):
                     # if "SVLEN" in svItem.info and svItem.info["SVLEN"] < 50:
                     #     continue
@@ -134,7 +258,7 @@ def removeDup(vcfFile, dupSet, passonly=True):
             elif svItem.id in dupSet: # duplicated variant
                 chrom1 = svItem.chrom
                 pos1 = svItem.pos
-                chrom2, pos2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")
+                chrom2, pos2 = get_sv_end(svItem)
                 if chroms(chrom1) < chroms(chrom2) or (chroms(chrom1) == chroms(chrom2) and pos1 <= int(pos2)):
                     # if "SVLEN" in svItem.info and svItem.info["SVLEN"] < 50:
                     #     continue
@@ -289,47 +413,3 @@ def _addHeader(vcfFile, new="SVLEN", outFileName=None):
     # tabix_index(outFileName, preset="vcf", force=True)
     return outFileName  # saved fileName
 
-def get_sv_end(svItem, ins_pseudoPos=False):
-    if "CHR2" in svItem.info.keys() and "POS2" in svItem.info.keys():
-        chrom2 = svItem.info["CHR2"]
-        pos2 = svItem.info["POS2"]
-    elif "SVTYPE" in svItem.info and (svItem.info['SVTYPE'] == "BND" or svItem.info['SVTYPE'] == "TRANS"):
-        if len(svItem.alts) == 1:
-            chrom2, pos2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")
-        else:
-            raise ValueError("BND format error")
-    else:
-        chrom2 = svItem.chrom
-        pos2 = svItem.stop
-        if svItem.info["SVTYPE"] == "INS" and ins_pseudoPos:
-            svlen = get_sv_len(svItem)
-            pos2 += svlen
-    return chrom2, int(pos2)
-
-def get_sv_type(svItem):
-    svtype = None
-    if "SVTYPE" in svItem.info:
-        svtype = svItem.info["SVTYPE"]
-    elif "REPTYPE" in svItem.info:
-        svtype = svItem.info["REPTYPE"]
-    else:
-        raise Exception("No SVTYPE or REPTYPE found in vcf file.")
-    return svtype
-
-def get_sv_len(svItem):
-    svlen = 0
-    if "SVLEN" in svItem.info:
-        if isinstance(svItem.info["SVLEN"], int) or isinstance(svItem.info["SVLEN"], float):
-            svlen = svItem.info["SVLEN"]
-        else:
-            svlen = svItem.info["SVLEN"][0]
-    elif "SVTYPE" in svItem.info and svItem.info['SVTYPE'] == "INS" or "I-Mosaic" in svItem.id:
-        if svItem.alts[0] == "<INS>":
-            svlen = svItem.info["SVINSLEN"]
-        else:
-            svlen = len(svItem.alts[0]) - len(svItem.ref)
-    elif "SVTYPE" in svItem.info and svItem.info['SVTYPE'] == "BND":
-        pass
-    else:
-        raise ValueError("wrong sv length extraction")
-    return int(svlen)

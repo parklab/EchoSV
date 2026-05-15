@@ -57,7 +57,7 @@ def liftover(contig, pos, window_size=500, chain_dict=None, bed_tree=None):
             # raise ValueError(f"Multiple chains found at {contig}:{pos+n}")
     return None, None
 
-def sv_cmp_liftover(config, WINDOW_SIZE=500):
+def sv_cmp_liftover(config, WINDOW_SIZE=500, verbose=False):
     # use the first ref1 as the baseline and collect ref1-based breakpoints
     sv_pos_dict = {}
     ref1 = config["refs"]["1"]
@@ -75,13 +75,13 @@ def sv_cmp_liftover(config, WINDOW_SIZE=500):
             chrom2, pos2 = get_sv_end(record, ins_pseudoPos=False)
             end_pos = pos2
             if ref != ref1:
-                if "h2tg" in chrom1:
+                if ref == "dsa" and "h2tg" in chrom1:
                     chrom1, pos1 = liftover(chrom1, pos1, window_size=50, chain_dict=chain, bed_tree=goodTree[1])
                 else:
                     chrom1, pos1 = liftover(chrom1, pos1, window_size=50, chain_dict=chain, bed_tree=goodTree[0])
                 if chrom1 == None or pos1 == None:
                     continue
-                if "h2tg" in chrom2:
+                if ref == "dsa" and "h2tg" in chrom1:
                     chrom2, pos2 = liftover(chrom2, pos2, window_size=50, chain_dict=chain, bed_tree=goodTree[1])
                 else:
                     chrom2, pos2 = liftover(chrom2, pos2, window_size=50, chain_dict=chain, bed_tree=goodTree[0])
@@ -130,7 +130,8 @@ def sv_cmp_liftover(config, WINDOW_SIZE=500):
                     n_matches += 1
                 match_items_list.append(match_item)
     # output the match items as csv
-    # print(f"Find {n_matches} pairwise matches within {WINDOW_SIZE}bp")
+    if verbose:
+        print(f"Find {int(n_matches/2)} pairwise matches via liftover within {WINDOW_SIZE}bp")
     df = pd.DataFrame(match_items_list, columns=config["refs"].values())  
     df.to_csv(config["output"].replace(".txt", "_liftover.txt"), index=False)       
     return match_items_list

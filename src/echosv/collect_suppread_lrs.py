@@ -12,12 +12,14 @@ Update:
 2024/10/14: Correct the INS bug: reads that only span the left breakpoint of INS (not DUP) will be omited.
 2025/01/25: Add pbsv-VNTR regions for extensive searching of supporting reads.
 TO DO:
+Add breakpoints matching for INV/DUP/BND soft-clipped reads
+For BND, the clipped reads shouldn't support other chrom's alignment
 Add orientation for SVs, consider the orientation of SuppReads with blunt end (>=50bp soft-clipped). 
 '''
 
 from pysam import VariantFile, tabix_index, AlignmentFile, VariantHeader
 import os
-from echosv.vcf_utils import _checkVCF, _ispass, _rowcount
+from echosv.vcf_utils import _checkVCF, _ispass, _rowcount, get_sv_end, get_sv_type, get_sv_len
 from echosv.bed_utils import loadBed
 import re, warnings, timeit
 warnings.filterwarnings("ignore")
@@ -44,6 +46,10 @@ def get_hp_tag(read):
         return str(read.get_tag("HP"))
     else:
         return "0"
+
+_worker_annSV = None
+def _processBin_worker(svBin):
+    return _worker_annSV._processBin(svBin)
 
 class AnnSV:
     def __init__(self, sv_vcf=None, 
@@ -72,6 +78,8 @@ class AnnSV:
         self.ratio_of_seqsize = ratio_of_seqsize
         self.vntr = loadBed(vntr, max_size=10000) if vntr else None
         self.verbose = verbose
+        self.soft_clip_start_pattern = re.compile(r'^[0-9]+S')
+        self.soft_clip_end_pattern = re.compile(r'[0-9]+S$')
 
     def _checkFile(self):
         if not os.path.exists(self.sv_vcf):
@@ -101,7 +109,8 @@ class AnnSV:
         n_sv = self._checkFile()
         vcf = VariantFile(self.sv_vcf)
         svs_info_per_run = []
-        n_jobs = n_sv // self.svs_per_job + 1
+        effective_svs_per_job = min(self.svs_per_job, max(1, n_sv // multiprocessing.cpu_count()))
+        n_jobs = n_sv // effective_svs_per_job + 1
         for i in range(n_jobs):
             svs_info_per_run.append({})
         n_index = 0
@@ -110,13 +119,15 @@ class AnnSV:
                 continue
             n_job_index = n_index // self.svs_per_job
             sv_id = "{}%{}%{}%{}%{}".format(svItem.chrom, svItem.pos, svItem.stop, svItem.id, svItem.alts[0])
-            svs_info_per_run[n_job_index][sv_id] = [self.get_sv_type(svItem), self._getSVlen(svItem), svItem.alts]  # svtype, svlen, alts
+            svs_info_per_run[n_job_index][sv_id] = [get_sv_type(svItem), get_sv_len(svItem), svItem.alts]  # svtype, svlen, alts
             n_index += 1
         vcf.close()
 
         # process each bin of SVs
-        pool = multiprocessing.Pool(processes=16)
-        svs_anno = pool.map(self._processBin, svs_info_per_run)
+        global _worker_annSV
+        _worker_annSV = self
+        pool = multiprocessing.Pool(processes=multiprocessing.cpu_count())
+        svs_anno = pool.map(_processBin_worker, svs_info_per_run)
         pool.close()
         pool.join()
         # merge a list of dict into one dict
@@ -145,10 +156,15 @@ class AnnSV:
         n_sv = 0
         annoVcf = VariantFile(self.out_file, "w", header=header)
         for svItem in vcf.fetch():
+            if not _ispass(svItem):
+                continue
             record = annoVcf.new_record(contig=svItem.contig, start=svItem.start, alleles=svItem.alleles,
                                             qual=svItem.qual, filter=svItem.filter.keys(), id=svItem.id, info=svItem.info)
             record.stop = svItem.stop
             sv_id = "{}%{}%{}%{}%{}".format(svItem.chrom, svItem.pos, svItem.stop, svItem.id, svItem.alts[0])
+            if sv_id not in svs_anno:
+                print(f"Warning: sv_id {sv_id} not found in svs_anno, skipping.")
+                continue
             for sample_index in range(len(self.sampleList)):
                 sampleName = self.sampleList[sample_index]
                 af, supp_info, haps_string = svs_anno[sv_id][sample_index]
@@ -190,16 +206,6 @@ class AnnSV:
             print("Processed SVs from {} in {}s.".format(first_sv_id, timeit.default_timer()-start))
         return svs_anno
 
-    def get_sv_type(self, svItem):  
-        svtype = None
-        if "SVTYPE" in svItem.info:
-            svtype = svItem.info["SVTYPE"]
-        elif "REPTYPE" in svItem.info:
-            svtype = svItem.info["REPTYPE"]
-        else:
-            raise Exception("No SVTYPE or REPTYPE found in vcf file.")
-        return svtype
-
     def regionAnno(self, svItem):
         if "BND" in self.get_sv_type(svItem):
             chrom2, pos2 = svItem.alts[0].replace('[', ']').split(']')[1].split(":")
@@ -239,7 +245,7 @@ class AnnSV:
             chrom2 = sv_chrom
             pos2 = sv_end
         supp_reads = set()  # hash table
-        supp_read_haps = ""
+        supp_read_haps = []
         unsupp_reads = set()
 
         left_aln_pos = {}
@@ -253,6 +259,7 @@ class AnnSV:
         # introduce vntr checking
         left_start = max(0, pos1-self.dist_threshold)
         left_end = pos1 + 1 + self.dist_threshold
+
         if self.vntr is not None:
             vntr_region = self.vntr[sv_chrom][sv_pos]
             if len(vntr_region) == 1:
@@ -284,7 +291,7 @@ class AnnSV:
                         isSupport = self._checkSVinAln(read, sv_type, pos1, pos2, sv_len, mapper, (left_start, left_end, right_start, right_end))
                         if isSupport:
                             supp_reads.add(read.query_name)
-                            supp_read_haps += get_hp_tag(read)
+                            supp_read_haps.append(get_hp_tag(read))
                         elif isSupport == False:
                             unsupp_reads.add(read.query_name)
                         if self.verbose:
@@ -296,7 +303,7 @@ class AnnSV:
                     else:
                         isSupport = True
                         supp_reads.add(read.query_name)
-                        supp_read_haps += get_hp_tag(read)
+                        supp_read_haps.append(get_hp_tag(read))
                         if self.verbose:
                             print("span", read.query_name, isSupport, read.reference_start, [item for item in left_aln_pos[read.query_name]], len(supp_reads))
                         left_aln_pos.pop(read.query_name)
@@ -306,7 +313,7 @@ class AnnSV:
                     isSupport = self._checkBND(read, read.reference_start, read.reference_end-1, [pos2])
                     if isSupport:   # the read has matched breakpoint with soft-clip, target variant supporting
                         supp_reads.add(read.query_name)
-                        supp_read_haps += get_hp_tag(read)
+                        supp_read_haps.append(get_hp_tag(read))
                         n_right_read += 1
                     elif isSupport == False and read.reference_start < pos2 < read.reference_end:    # ref-supporting read
                         unsupp_reads.add(read.query_name)
@@ -324,7 +331,7 @@ class AnnSV:
                     isSupport = self._checkBND(aln, aln.reference_start, aln.reference_end-1, [pos1])
                 if isSupport:   # the read has matched breakpoint with soft-clip
                     supp_reads.add(read_name)
-                    supp_read_haps += get_hp_tag(aln)
+                    supp_read_haps.append(get_hp_tag(aln))
                     n_left_read += 1
                 elif isSupport == False and aln.reference_start < pos1 < aln.reference_end: # ref-supporting read
                     unsupp_reads.add(read_name)
@@ -339,25 +346,8 @@ class AnnSV:
         if self.verbose:
             print(svItem, len(supp_reads), supp_reads)
             print("cross read: {}, left reads {} right reads {}".format(n_cross_read, n_left_read, n_right_read))
-        return supp_reads, len(supp_reads)+len(unsupp_reads)-int(0.5*(n_left_unsupp_reads+n_right_unsupp_reads)), supp_read_haps
+        return supp_reads, len(supp_reads)+len(unsupp_reads)-int(0.5*(n_left_unsupp_reads+n_right_unsupp_reads)), "".join(supp_read_haps)
         # return supp_reads, len(supp_reads) + len(unsupp_reads)
-    
-    def _getSVlen(self, svItem):
-        if "SVLEN" in svItem.info:
-            svlen = svItem.info["SVLEN"]
-            if isinstance(svlen, int):
-                return abs(svlen)
-            if isinstance(svlen, tuple):
-                return abs(svlen[0])
-            if isinstance(svlen, float):
-                return abs(int(svlen))
-            # print(svItem)
-            raise Exception("No valid SVLEN found in vcf file.")
-        else:
-            if len(svItem.alts) > 1:
-                # print(svItem)
-                raise Exception("Can't compute valid SVLEN in vcf file.")
-            return abs(len(svItem.alts[0]) - len(svItem.ref))
     
     def _checkSVinAln(self, aln, svtype, ref_pos1, ref_pos2, svlen=None, mapper=None, search_region=(0, 0, 0, 0)):
         q_pos1 = q_pos2 = r_pos1 = r_pos2 = None
@@ -407,13 +397,11 @@ class AnnSV:
         mismatch_thre = min(mismatch_thre, self.dist_threshold)
         isSupport = False
         cigarstring = read.cigarstring
-        soft_clip_start_pattern = re.compile(r'^[0-9]+S')
-        soft_clip_end_pattern = re.compile(r'[0-9]+S$')
         clp_pos_list = []
-        start_match = soft_clip_start_pattern.search(cigarstring)
+        start_match = self.soft_clip_start_pattern.search(cigarstring)
         if bool(start_match) and int(start_match.group(0)[:-1]) >= mismatch_thre:
             clp_pos_list.append(left_end)
-        end_match = soft_clip_end_pattern.search(cigarstring)
+        end_match = self.soft_clip_end_pattern.search(cigarstring)
         if bool(end_match) and int(end_match.group(0)[:-1]) >= mismatch_thre:
             clp_pos_list.append(right_end)
         for pos in clp_pos_list:
