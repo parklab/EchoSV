@@ -9,6 +9,7 @@
 import gzip, timeit, argparse, os
 from Bio import SeqIO
 from pysam import AlignmentFile
+import numpy as np
 
 def _parse_index_file(path):
     """Parse a contig-length index file regardless of format.
@@ -82,7 +83,7 @@ def get_coverage_bam(bam_file, output_file, mapq_threshold=1):
         chroms[chrom] = alignment_file.get_reference_length(chrom)
     def cal_coverage(chrom):
         dsa_map_region = {}
-        coverage = [0] * chroms[chrom]
+        coverage = np.zeros(chroms[chrom], dtype=int)
         for read in alignment_file.fetch(chrom):
             if read.mapping_quality < mapq_threshold:
                 continue
@@ -106,8 +107,7 @@ def get_coverage_bam(bam_file, output_file, mapq_threshold=1):
                     query_start += length
                 elif op == 2:  # D=2 (Deletion from the reference, consumes reference but not read)
                     if length <= 20:
-                        for i in range(start, start+length):
-                            coverage[i] += 1
+                        coverage[start:start+length] += 1
                     start += length
                 elif op == 3:  # N=3 (Skipped region from the reference, like intron, consumes reference)
                     start += length
@@ -120,28 +120,20 @@ def get_coverage_bam(bam_file, output_file, mapq_threshold=1):
                     else:
                         dsa_map_region[read.query_name].append([prefix_len + query_start, prefix_len + query_start + length])
                     query_start += length
-                    for i in range(start, start+length):
-                        coverage[i] += 1
+                    coverage[start:start+length] += 1
                     start += length
             # dsa_map_region[read.query_name].append([prefix_len+read.query_alignment_start, prefix_len+read.query_alignment_end])
         # track regions, find all the regions >= 1kb [no restriction on size]
         chrom_regions = []
         current_cov = None
-        for pos, cov in enumerate(coverage):
-            if current_cov is None:
-                current_cov = cov
-                start = pos
-            elif current_cov != cov:
-                end = pos
-                # if end - start >= 1000:
-                chrom_regions.append([chrom, start+1, end, current_cov])    # 1-based
-                current_cov = cov
-                start = pos
-            else:
-                continue
-        if len(chrom_regions) == 0 or chrom_regions[-1][2] != chroms[chrom]:
-            # if chroms[chrom] - start >= 1000:
-            chrom_regions.append([chrom, start+1, chroms[chrom], current_cov])
+        changes = np.flatnonzero(np.diff(coverage))
+        seg_starts = np.concatenate(([0], changes + 1))
+        seg_ends = np.concatenate((changes + 1, [len(coverage)]))
+        cov_vals = coverage[seg_starts]
+        chrom_regions = [[chrom, int(s)+1, int(e), int(c)] for s, e, c in zip(seg_starts, seg_ends, cov_vals)]
+        if not chrom_regions:
+            chrom_regions = [[chrom, 1, chroms[chrom], int(coverage[0])]]
+
         # print(f"Chrom {chrom} has {len(chrom_regions)} regions >= 1kb")
         return chrom_regions, dsa_map_region
     bed_file = output_file.replace('.chain.gz', '.bed')
