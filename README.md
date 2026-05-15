@@ -78,14 +78,19 @@ echosv chain \
 ```
 
 <details>
-<summary>**Parameters:**</summary>
+<summary><strong>Parameters</strong></summary>
+
 -  `-b`: Path to the ref2-to-ref1 alignment (BAM format, must be indexed)
 -  `-f`: Path to the ref2 reference FASTA
 -  `-o`: Output chain file for coordinate mapping (a coverage BED file is also written alongside)
+
 </details>
 
+### Step 2: Merge SV call sets from the same reference (optional)
+
 <details>
-<summary>### Step 2: Merge SV call sets from the same reference (optional)</summary>
+<summary>Merge multi-caller VCFs from the same reference into one call set before genotyping.</summary>
+
 The `merge` command merges multiple SV call sets that were called against the **same** reference genome (e.g., outputs from multiple callers). This step is typically run before `genotype` and `match` so that each reference has a single unified call set for cross-reference comparison.
 
 ```bash
@@ -128,12 +133,14 @@ echosv genotype --longread \
 ```
 
 <details>
-<summary>**Parameters:**</summary>
+<summary><strong>Parameters</strong></summary>
+
 -  `--longread`: Collect supporting reads from long-read alignments
 -  `--shortread`: Collect supporting reads from short-read alignments
 -  `-i`: Input SV VCF file
 -  `-b`: BAM file(s) — multiple BAMs can be provided space-separated
 -  `-o`: Output VCF with annotated supporting-read information
+
 </details>
 
 ### Step 4: Match SVs across references
@@ -148,7 +155,10 @@ echosv match -i test_data/test_colo829_config.json
 echosv match -i test_data/test_colo829_config.json --merge
 ```
 
-The input is a JSON config file specifying reference labels, genotyped VCFs, chain files, and the output path. See `test_data/test_colo829_config.json` for a working example:
+The input is a JSON config file specifying reference labels, genotyped VCFs, chain files, and the output path. See `test_data/test_colo829_config.json` below for a working example.
+
+<details>
+<summary><strong>Example JSON</strong></summary>
 
 ```json
 {
@@ -162,12 +172,16 @@ The input is a JSON config file specifying reference labels, genotyped VCFs, cha
 }
 ```
 
+</details>
+
 <details>
-<summary>**Parameters:**</summary>
+<summary><strong>Parameters</strong></summary>
+
 -  `-i`: Input config JSON file
 -  `--merge`: Merge concordant SVs across references and write a unified VCF
 -  `--multiplat`: Use multi-platform genotyping information during matching
 -  `-m / --min_echo_score`: Minimum echo score to consider two SVs a match (default: 0.5)
+
 </details>
 
 ## License

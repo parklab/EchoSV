@@ -298,12 +298,12 @@ def extract_truthset(raw_merge_vcf,
     print(f"Extracting truth set from {raw_merge_vcf} with at least {n_supp} supporting callers and {n_platform} platforms, removeGap={removeGap}")
     if removeGap:
         sample = os.path.basename(raw_merge_vcf).split("_")[1]
-        if ref == "grch38" or "hg38":
-            gaps_bed = "../../beds/hg38_no_alt_Ns.bed"
+        dsa_gap_bed = os.path.join(os.path.dirname(__file__), f"../../beds/{sample}bl_{ref}_Ns.bed")
+        if ref in ("grch38", "hg38"):
+            gaps_bed = os.path.join(os.path.dirname(__file__), "../../beds/hg38_no_alt_Ns.bed")
             gap_tree = loadBed(gaps_bed)
-        elif os.path.exists(f"../../beds/{sample}bl_{ref}_Ns.bed"):
-            gaps_bed = f"../../beds/{sample}bl_{ref}_Ns.bed"
-            gap_tree = loadBed(gaps_bed)
+        elif os.path.exists(dsa_gap_bed):
+            gap_tree = loadBed(dsa_gap_bed)
         elif gaps_bed is None:
             print("Warning: --gaps-bed not provided; skipping gap-proximity filter.")
             removeGap = False
