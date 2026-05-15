@@ -21,7 +21,7 @@ from pysam import VariantFile, tabix_index, AlignmentFile, VariantHeader
 import os
 from echosv.vcf_utils import _checkVCF, _ispass, _rowcount, get_sv_end, get_sv_type, get_sv_len
 from echosv.bed_utils import loadBed
-import re, warnings, timeit
+import re, warnings, timeit, sys
 warnings.filterwarnings("ignore")
 import multiprocessing, timeit
 
@@ -127,9 +127,14 @@ class AnnSV:
         global _worker_annSV
         _worker_annSV = self
         pool = multiprocessing.Pool(processes=multiprocessing.cpu_count())
-        svs_anno = pool.map(_processBin_worker, svs_info_per_run)
-        pool.close()
-        pool.join()
+        try:
+            svs_anno = pool.map(_processBin_worker, svs_info_per_run)
+            pool.close()
+            pool.join()
+        except MemoryError:
+            pool.terminate()
+            pool.join()
+            sys.exit("Error: out of memory during parallel SV processing. Try reducing --svs-per-job or running with fewer CPUs.")
         # merge a list of dict into one dict
         svs_anno = {k: v for d in svs_anno for k, v in d.items()}
 
@@ -267,7 +272,11 @@ class AnnSV:
                 left_start = min(list(vntr_region)[0].begin, left_start)
                 left_end = max(list(vntr_region)[0].end, left_end)
             
+        max_reads = 50000
         for read in bam.fetch(chrom1, left_start, left_end):
+            if len(left_aln_pos) >= max_reads:
+                print(f"Warning: read cap ({max_reads}) reached at left breakpoint {chrom1}:{pos1}; skipping remaining reads.")
+                break
             if read.mapping_quality >= self.min_mapq:
                 if read.query_name not in left_aln_pos:
                     left_aln_pos[read.query_name] = {}

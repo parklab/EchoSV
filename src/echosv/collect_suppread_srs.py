@@ -15,7 +15,7 @@ from pysam import VariantFile, tabix_index, AlignmentFile, VariantHeader
 import os
 from echosv.vcf_utils import _checkVCF, _ispass, _rowcount
 from echosv.bed_utils import loadBed
-import re, timeit
+import re, timeit, sys
 
 class AnnSV:
     def __init__(self, sv_vcf=None, 
@@ -86,48 +86,49 @@ class AnnSV:
         annoVcf = VariantFile(self.out_file, "w", header=header)
         n_region_sv = 0
         n_sv = 0
-        for svItem in vcf.fetch():
-            if not _ispass(svItem):
-                continue
-            record = annoVcf.new_record(contig=svItem.contig, start=svItem.start, alleles=svItem.alleles,
-                                        qual=svItem.qual, filter=svItem.filter.keys(), id=svItem.id, info=svItem.info)
-            record.stop = svItem.stop
-            if self.bed_file is not None:   
-                if self.regionAnno(svItem):
-                    n_region_sv += 1
-                    record.info["Region"] = True
-            #for sample in svItem.samples.keys():
-                #record.samples[sample]['AF'] = svItem.samples[sample]['AF']
-                #record.samples[sample]['RNAMES'] = svItem.samples[sample]['RNAMES']
-            # add sample information from each BAM
-            for sample_index, bam in enumerate(bam_handles):
-                sampleName = self.sampleList[sample_index]
-                # self.bam = AlignmentFile(self.bam_list[sample_index], "rb")
-                self.bam = bam
-                supp_reads, af = self.get_sv_reads(svItem)
-                # self.bam.close()
-            
-                record.samples[sampleName]['AF'] = af
-                if self.ifWriteReadNames:
-                    supp_reads = [read.replace(":", "_") for read in supp_reads]
-                    record.samples[sampleName]['RNAMES'] = ",".join(supp_reads)
-                else:
-                    record.samples[sampleName]['RNAMES'] = str(len(supp_reads))
+        try:
+            for svItem in vcf.fetch():
+                if not _ispass(svItem):
+                    continue
+                record = annoVcf.new_record(contig=svItem.contig, start=svItem.start, alleles=svItem.alleles,
+                                            qual=svItem.qual, filter=svItem.filter.keys(), id=svItem.id, info=svItem.info)
+                record.stop = svItem.stop
+                if self.bed_file is not None:
+                    if self.regionAnno(svItem):
+                        n_region_sv += 1
+                        record.info["Region"] = True
+                #for sample in svItem.samples.keys():
+                    #record.samples[sample]['AF'] = svItem.samples[sample]['AF']
+                    #record.samples[sample]['RNAMES'] = svItem.samples[sample]['RNAMES']
+                # add sample information from each BAM
+                for sample_index, bam in enumerate(bam_handles):
+                    sampleName = self.sampleList[sample_index]
+                    # self.bam = AlignmentFile(self.bam_list[sample_index], "rb")
+                    self.bam = bam
+                    supp_reads, af = self.get_sv_reads(svItem)
+                    # self.bam.close()
 
-            annoVcf.write(record)
-            if self.verbose:
-                print(record)
-            n_sv += 1
-            if n_sv % 1000 == 0:
-                print("Processed {} SVs.".format(n_sv))
-            #if abs(svItem.info['AF'] - record.samples[sampleName]['AF']) > 0.1:
-            #    print(svItem, svItem.info['AF'], af, len(supp_reads), cov)
-            #    n_region_sv += 1
+                    record.samples[sampleName]['AF'] = af
+                    if self.ifWriteReadNames:
+                        supp_reads = [read.replace(":", "_") for read in supp_reads]
+                        record.samples[sampleName]['RNAMES'] = ",".join(supp_reads)
+                    else:
+                        record.samples[sampleName]['RNAMES'] = str(len(supp_reads))
+
+                annoVcf.write(record)
+                if self.verbose:
+                    print(record)
+                n_sv += 1
+                if n_sv % 1000 == 0:
+                    print("Processed {} SVs.".format(n_sv))
+        except MemoryError:
+            sys.exit("Error: out of memory while processing SVs. Try splitting the input VCF into smaller batches.")
+        finally:
+            for bam in bam_handles:
+                bam.close()
+            vcf.close()
+            annoVcf.close()
         print("Number of SVs in interested regions: {} out of {}".format(n_region_sv, n_sv))
-        for bam in bam_handles:
-            bam.close()
-        vcf.close()
-        annoVcf.close()
         tabix_index(self.out_file, preset="vcf", force=True)
 
     def get_sv_type(self, svItem):
@@ -188,7 +189,11 @@ class AnnSV:
             end_pos = min(mid_pos, pos1 + self.dist_threshold)
         if self.verbose:
             print("left region", chrom1, max(0, pos1-self.dist_threshold), end_pos)
+        max_reads = 50000
         for read in self.bam.fetch(chrom1, max(0, pos1-self.dist_threshold), end_pos):
+            if len(left_aln_pos) >= max_reads:
+                print(f"Warning: read cap ({max_reads}) reached at left breakpoint {chrom1}:{pos1}; skipping remaining reads.")
+                break
             if read.is_unmapped or read.is_secondary or read.is_duplicate:
                 continue
             if read.mapping_quality >= self.min_mapq:

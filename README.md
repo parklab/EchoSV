@@ -107,7 +107,7 @@ echosv merge \
     --extract 
 ```
 
-Pre-built gap BED files for the references used in this study are provided in the `beds/` directory; a new gap BED can be passed by using `--gapbed`.
+Pre-built gap BED files for the references used in this study are provided in the `src/echosv/beds/` directory; a new gap BED can be passed by using `--gapbed`.
 
 **Parameters:**
 -  `-i`: Input VCF file(s) — space-separated list for `--merge`, single file for `--extract`
@@ -151,8 +151,8 @@ The `match` command compares SV call sets across different reference genomes usi
 # Compare SV call sets and report concordant / reference-exclusive variants
 echosv match -i test_data/test_colo829_config.json
 
-# Compare and also produce a merged VCF of concordant SVs
-echosv match -i test_data/test_colo829_config.json --merge
+# Compare SV call sets between DSA haplotypes and also produce a merged DSA-based VCF
+echosv match -i dsa_merge_colo829_config.json --merge --filter
 ```
 
 The input is a JSON config file specifying reference labels, genotyped VCFs, chain files, and the output path. See `test_data/test_colo829_config.json` below for a working example.
