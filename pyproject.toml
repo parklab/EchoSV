@@ -23,8 +23,15 @@ dependencies = [
     "rich",
 ]
 
+[tool.setuptools.dynamic]
+version = {attr = "echosv.__version__"}
+
 [project.scripts]
 echosv = "echosv.main:main"
 
 [tool.setuptools.package-data]
 echosv = ["beds/*.bed"]
+
+[project.urls]
+Homepage = "https://github.com/parklab/EchoSV"
+Issues = "https://github.com/parklab/EchoSV/issues"

@@ -152,7 +152,7 @@ The `match` command compares SV call sets across different reference genomes usi
 echosv match -i test_data/test_colo829_config.json
 
 # Compare SV call sets between DSA haplotypes and also produce a merged DSA-based VCF
-echosv match -i dsa_merge_colo829_config.json --merge --filter
+echosv match -i dsa_merge_colo829_config.json --merge 
 ```
 
 The input is a JSON config file specifying reference labels, genotyped VCFs, chain files, and the output path. See `test_data/test_colo829_config.json` below for a working example.
