@@ -68,7 +68,7 @@ minimap2 -a -x asm5 --cs ref1.fa ref2.fa \
 samtools index ref2_to_ref1.bam
 ```
 
-Then generate the chain file. EchoSV looks for a pre-built index automatically in this order: `<fasta>.fai` (samtools faidx) → `<fasta>.dict` (Picard / samtools dict) → `<stem>.dict`. If none exist, the FASTA is parsed directly (slower for large assemblies). You can generate an index with `samtools faidx ref2.fa` or `samtools dict ref2.fa > ref2.fa.dict`.
+Then generate the chain file. EchoSV looks for a pre-built index automatically to parse the contig lengths; if none exist, the FASTA is parsed directly (slower for large assemblies). You can generate an index with `samtools faidx ref2.fa` or `samtools dict ref2.fa > ref2.fa.dict`.
 
 ```bash
 echosv chain \
@@ -77,13 +77,15 @@ echosv chain \
     -o test_data/chm13_to_grch38.chain.gz
 ```
 
-**Parameters:**
+<details>
+<summary>**Parameters:**</summary>
 -  `-b`: Path to the ref2-to-ref1 alignment (BAM format, must be indexed)
 -  `-f`: Path to the ref2 reference FASTA
 -  `-o`: Output chain file for coordinate mapping (a coverage BED file is also written alongside)
+</details>
 
-### Step 2: Merge SV call sets from the same reference (optional)
-
+<details>
+<summary>### Step 2: Merge SV call sets from the same reference (optional)</summary>
 The `merge` command merges multiple SV call sets that were called against the **same** reference genome (e.g., outputs from multiple callers). This step is typically run before `genotype` and `match` so that each reference has a single unified call set for cross-reference comparison.
 
 ```bash
@@ -112,6 +114,7 @@ Pre-built gap BED files for the references used in this study are provided in th
 -  `--new`: Build merged VCF records from scratch (use with `--merge`)
 -  `--extract`: Extract high-confidence SVs (≥4 supporting callers and ≥2 platforms)
 -  `--gaps-bed`: BED file of reference gap / N regions; SVs near gaps are excluded when using `--extract`
+</details>
 
 ### Step 3: Collect supporting reads
 
@@ -124,12 +127,14 @@ echosv genotype --longread \
     -o test_data/grch38_colo829_genotyped.vcf.gz
 ```
 
-**Parameters:**
+<details>
+<summary>**Parameters:**</summary>
 -  `--longread`: Collect supporting reads from long-read alignments
 -  `--shortread`: Collect supporting reads from short-read alignments
 -  `-i`: Input SV VCF file
 -  `-b`: BAM file(s) — multiple BAMs can be provided space-separated
 -  `-o`: Output VCF with annotated supporting-read information
+</details>
 
 ### Step 4: Match SVs across references
 
@@ -157,11 +162,13 @@ The input is a JSON config file specifying reference labels, genotyped VCFs, cha
 }
 ```
 
-**Parameters:**
+<details>
+<summary>**Parameters:**</summary>
 -  `-i`: Input config JSON file
 -  `--merge`: Merge concordant SVs across references and write a unified VCF
 -  `--multiplat`: Use multi-platform genotyping information during matching
 -  `-m / --min_echo_score`: Minimum echo score to consider two SVs a match (default: 0.5)
+</details>
 
 ## License
 
